@@ -27,9 +27,10 @@ El generador construye un nivel de una planta con una envolvente rectangular cer
 | `name` | Nombre que empieza por `cs_` para rescate o `de_` para desactivación. |
 | `size` | Ancho, fondo y altura interior en unidades de mapa. |
 | `scale` | Multiplicador de la arquitectura, el mobiliario y la distribución. Puedes probar otro valor con `--scale`. |
-| `walls`, `props` | Cajas sólidas `[x1, y1, z1, x2, y2, z2]`. Para una puerta, divide el muro y deja el vano entre los tramos. |
+| `walls`, `props` | Cajas sólidas `[x1, y1, z1, x2, y2, z2]` o elementos con `box` y `material`. Para una puerta, divide el muro y deja el vano entre los tramos. |
+| `materials` | Texturas opcionales. Cada nombre en mayúsculas admite `colors` con dos colores RGB y `pattern` con `checker`, `tile` o `grain`. Puedes redefinir `FC_FLOOR`, `FC_WALL` y `FC_CEILING`. |
 | `spawns.ct`, `spawns.t` | Puntos `[x, y, ángulo]`. La altura se ajusta al tamaño estándar del jugador. FreeCS crea las zonas de compra alrededor de estos puntos. |
-| `lights` | Posiciones `[x, y, z]` dentro del espacio libre. Si omites el campo, se coloca una luz al centro. |
+| `lights` | Posiciones `[x, y, z]` dentro del espacio libre con una intensidad opcional como cuarto valor. Si omites el campo, se coloca una luz al centro. |
 | `objective.zones` | Cajas para las zonas de rescate o los sitios de bomba. |
 | `objective.hostages` | Puntos `[x, y]` para los rehenes en mapas `cs_`. |
 

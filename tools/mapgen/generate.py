@@ -50,6 +50,40 @@ def box(value, label, size):
     return coords
 
 
+def read_materials(plan):
+    result = {name: ("checker", colors) for name, colors in PALETTE.items()}
+    custom = plan.get("materials", {})
+    if not isinstance(custom, dict):
+        raise ValueError("materials must be an object")
+    for name, spec in custom.items():
+        if not re.fullmatch(r"[A-Z][A-Z0-9_]{0,14}", name) or not isinstance(spec, dict):
+            raise ValueError(f"Invalid material definition: {name}")
+        pattern = spec.get("pattern", "checker")
+        if pattern not in ("checker", "tile", "grain"):
+            raise ValueError(f"materials.{name}.pattern must be checker, tile or grain")
+        colors = [tuple(array(color, f"materials.{name} RGB", 3))
+                  for color in array(spec.get("colors"), f"materials.{name}.colors", 2)]
+        if any(type(channel) is not int or not 0 <= channel <= 255 for color in colors for channel in color):
+            raise ValueError(f"materials.{name} requires RGB integers from 0 to 255")
+        result[name] = (pattern, colors)
+    return result
+
+
+def read_solids(plan, group, size, materials, default):
+    result = []
+    for index, entry in enumerate(array(plan.get(group, []), group)):
+        label = f"{group}[{index}]"
+        bounds = entry
+        material = default
+        if isinstance(entry, dict):
+            bounds = entry.get("box")
+            material = entry.get("material", default)
+        if not isinstance(material, str) or material not in materials:
+            raise ValueError(f"{label} references an unknown material: {material}")
+        result.append((box(bounds, label, size), material))
+    return result
+
+
 def overlaps(first, second):
     return all(a < d and c < b for a, b, c, d in zip(first[:3], first[3:], second[:3], second[3:]))
 
@@ -124,12 +158,11 @@ def make_map(plan, scale_override):
     if any(edge <= 0 or (edge + SHELL_THICKNESS) * scale >= MAP_LIMIT for edge in size):
         raise ValueError(f"Scaled room and shell must fit within {MAP_LIMIT} map units on each axis")
 
-    walls = [box(item, "walls entry", size) for item in array(plan.get("walls", []), "walls")]
-    props = [box(item, "props entry", size) for item in array(plan.get("props", []), "props")]
-    solids = walls + props
-    world = list(shell(size))
-    world.extend((item, "FC_WALL") for item in walls)
-    world.extend((item, "FC_PROP") for item in props)
+    materials = read_materials(plan)
+    walls = read_solids(plan, "walls", size, materials, "FC_WALL")
+    props = read_solids(plan, "props", size, materials, "FC_PROP")
+    solids = [bounds for bounds, _ in walls + props]
+    world = [*shell(size), *walls, *props]
     entities = [entity("worldspawn", (("mapversion", "220"), ("wad", f"{name}.wad")),
                        (brush(bounds, texture, scale) for bounds, texture in world))]
 
@@ -157,12 +190,18 @@ def make_map(plan, scale_override):
     default_light = [[edge / 2 for edge in size]]
     lights = array(plan.get("lights", default_light), "lights")
     for item in lights:
-        light = coordinates(item, "lights entry", 3)
+        values = array(item, "lights entry")
+        if len(values) not in (3, 4):
+            raise ValueError("A light requires [x, y, z] and an optional intensity")
+        light = coordinates(values[:3], "lights position", 3)
+        intensity = number(values[3], "light intensity") if len(values) == 4 else 240
+        if not 0 < intensity <= 2000:
+            raise ValueError("Light intensity must be greater than 0 and at most 2000")
         if any(not 0 < value < edge for value, edge in zip(light, size)) or any(
             all(a <= v <= b for a, v, b in zip(solid[:3], light, solid[3:])) for solid in solids
         ):
             raise ValueError("Each light must be in open space inside the room")
-        brightness = round(240 * scale)
+        brightness = round(intensity * scale)
         entities.append(entity("light", (("origin", point(v * scale for v in light)),
                                          ("_light", f"255 246 225 {brightness}"))))
 
@@ -185,21 +224,29 @@ def make_map(plan, scale_override):
         check_clearance(x, y, PLAYER_HEIGHT + 1, size, solids, scale, label)
         entities.append(entity("hostage_entity", (("origin", point((x * scale, y * scale, 1))),
                                                   ("model", "models/hostage.mdl"))))
-    return name, "\n".join(entities) + "\n"
+    return name, "\n".join(entities) + "\n", materials
 
 
-def write_wad(destination):
-    """Write original indexed checker textures and their four WAD3 mip levels."""
+def texture_pixels(size, pattern):
+    if pattern == "tile":
+        return (int(x == 0 or y == 0) for y in range(size) for x in range(size))
+    if pattern == "grain":
+        return (int((y * 7 // size) % 3 == 0) for y in range(size) for _ in range(size))
+    tile = size // 4
+    return ((x // tile + y // tile) % 2 for y in range(size) for x in range(size))
+
+
+def write_wad(destination, materials):
+    """Write indexed prototype textures and their four WAD3 mip levels."""
     directory = bytearray()
     with destination.open("wb") as wad:
         wad.write(bytes(12))
-        for name, colors in PALETTE.items():
+        for name, (pattern, colors) in materials.items():
             offsets = []
             pixels = bytearray()
             for size in (32, 16, 8, 4):
                 offsets.append(40 + len(pixels))
-                tile = size // 4
-                pixels.extend((x // tile + y // tile) % 2 for y in range(size) for x in range(size))
+                pixels.extend(texture_pixels(size, pattern))
             palette = bytes(colors[0] + colors[1]) + bytes(254 * 3)
             named = name.encode("ascii")
             miptex = struct.pack("<16s6I", named, 32, 32, *offsets)
@@ -209,7 +256,7 @@ def write_wad(destination):
         directory_offset = wad.tell()
         wad.write(directory)
         wad.seek(0)
-        wad.write(struct.pack("<4sii", b"WAD3", len(PALETTE), directory_offset))
+        wad.write(struct.pack("<4sii", b"WAD3", len(materials), directory_offset))
 
 
 def compilers(directory):
@@ -253,12 +300,12 @@ def main():
 
     try:
         with args.plan.open(encoding="utf-8-sig") as source:
-            name, map_text = make_map(json.load(source), args.scale)
+            name, map_text, materials = make_map(json.load(source), args.scale)
         args.output.mkdir(parents=True, exist_ok=True)
         with TemporaryDirectory(prefix="mapgen-", dir=args.output) as temp:
             stage = Path(temp)
             (stage / f"{name}.map").write_text(map_text, encoding="ascii", newline="\n")
-            write_wad(stage / f"{name}.wad")
+            write_wad(stage / f"{name}.wad", materials)
             suffixes = ["map", "wad"]
             if args.compiler_dir:
                 compile_map(args.compiler_dir.resolve(), stage, name)
