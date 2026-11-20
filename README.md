@@ -39,6 +39,9 @@ Basically, the game is playable as long as you don't care about grenades (for no
 
 *Optional step: Copy the 'valve' folder from your Half-Life installation in order for all assets to show up*
 
+# Custom maps
+See the [map generator](tools/mapgen/README.md) for building a playable GoldSrc map from a floor plan.
+
 # Notes
 You might get away with using the cstrike folder from the Steam version of Counter-Strike 1.6, or any older version
 than 1.5 - but they are not supported. I will not try to recreate 1.6 or any other earlier versions specifically.
